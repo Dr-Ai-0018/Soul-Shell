@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# uv / 虚拟环境
+.venv/
+uv.lock
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 配置文件（含 API Key，绝对不能提交）
+~/.config/soul-shell/
+channels.toml
+*.toml.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# Soul-Shell 运行时数据
+~/.local/share/soul-shell/
+*.db
+*.chroma/
+
+# 参考文件
+reference/
+prompts/user_profile.md
+
+# 初始开发阶段的临时文件
+Original_Thought.md
+DESIGN.md
+IMPROVEMENTS.md
