@@ -1,18 +1,59 @@
 import tomllib
-from .defaults import CONFIG_FILE
+from .defaults import (
+    CONFIG_FILE,
+    MAX_SHELL_LOG, SHELL_CONTEXT_INJECT, SOUL_REACT_PROBABILITY,
+    MAX_HISTORY_TURNS, RISK_THRESHOLD_HIGH, AUTO_MAX_ITERATIONS,
+)
+
+
+def _load_toml() -> dict:
+    if not CONFIG_FILE.exists():
+        return {}
+    with open(CONFIG_FILE, "rb") as f:
+        return tomllib.load(f)
 
 
 def load_channels_raw() -> list[dict]:
-    if not CONFIG_FILE.exists():
-        return []
-    with open(CONFIG_FILE, "rb") as f:
-        data = tomllib.load(f)
-    return data.get("channels", [])
+    return _load_toml().get("channels", [])
+
+
+def load_settings() -> dict:
+    """
+    读取 channels.toml 中的 [settings] 表，缺失项回落到 defaults.py 的默认值。
+
+    可配置项示例（channels.toml）：
+        [settings]
+        shell_log_size     = 500    # 本地缓冲区大小
+        shell_context_inject = 30   # 注入 AI 的条数
+        react_probability  = 0.20   # 成功命令触发点评概率 (0.0~1.0)
+        max_history_turns  = 30     # 对话历史轮数
+        risk_threshold     = 60     # 高风险命令阈值 (0~100)
+    """
+    raw = _load_toml().get("settings", {})
+    return {
+        "shell_log_size":      int(raw.get("shell_log_size",      MAX_SHELL_LOG)),
+        "shell_context_inject": int(raw.get("shell_context_inject", SHELL_CONTEXT_INJECT)),
+        "react_probability":   float(raw.get("react_probability",  SOUL_REACT_PROBABILITY)),
+        "max_history_turns":   int(raw.get("max_history_turns",   MAX_HISTORY_TURNS)),
+        "risk_threshold":      int(raw.get("risk_threshold",      RISK_THRESHOLD_HIGH)),
+        "auto_max_iterations": int(raw.get("auto_max_iterations", AUTO_MAX_ITERATIONS)),
+    }
 
 
 CONFIG_EXAMPLE = """\
-# Soul-Shell 渠道配置示例
+# Soul-Shell 配置文件
 # 保存至 ~/.config/soul-shell/channels.toml
+
+# ── 行为设置（可选，不写则用默认值）──────────────────────────────────
+# [settings]
+# shell_log_size      = 200    # 本地命令日志缓冲区大小（条）
+# shell_context_inject = 20    # 每次注入 AI 上下文的命令条数
+# react_probability   = 0.30   # 命令成功时 Soul 点评概率 (0.0 ~ 1.0)
+# max_history_turns   = 20     # 对话历史最大轮数
+# risk_threshold      = 70     # 高风险命令确认阈值 (0 ~ 100)
+# auto_max_iterations = 10     # 连续模式最大自动执行轮数
+
+# ── 渠道配置（至少填一个）───────────────────────────────────────────
 
 [[channels]]
 name = "deepseek"
