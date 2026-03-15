@@ -23,17 +23,28 @@ _PROMPT_STYLE = Style.from_dict({
     "prompt.dollar": "#ffffff",
 })
 
+# 始终注入 system 的命令协议（让 AI 知道 <cmd> 能被执行并会收到反馈）
+_CMD_PROTOCOL = """\
+
+---
+【命令执行协议】
+- 需要执行 Shell 命令时，用 <cmd>...</cmd> 包裹，每次只给一条
+- 命令执行后，输出和退出码会作为系统消息反馈给你，你可以据此继续
+- 多步骤任务：逐条给命令，看到反馈再给下一条，全部完成后在回复末尾输出 [Done]
+- 单步任务或纯回答：正常回复，不需要输出 [Done]
+- 命令被拦截或用户跳过时，你会收到通知，据此调整方案
+---"""
+
+# 连续模式追加的额外约束（在 _CMD_PROTOCOL 基础上叠加）
 _AUTO_PROTOCOL = """\
 
 ---
-【连续执行模式协议】
-你现在处于自主任务执行模式，规则如下：
+【连续执行模式】
+你现在处于自主任务执行模式，必须持续执行直到完成：
 1. 先简短描述整体执行计划
-2. 每次只输出一条 Shell 命令，用 <cmd>...</cmd> 包裹，不要一次给多条
-3. 命令执行后，系统会把输出和退出码反馈给你
-4. 根据反馈判断：任务完成 → 在回复末尾输出 [Done]；未完成 → 输出下一条命令
-5. 遇到报错，分析原因后决定是否调整方案，不要重复失败的命令
-6. 命令被用户跳过或拦截时，重新规划或放弃该步骤
+2. 每次只输出一条命令，看到反馈再给下一条，不要一次给多条
+3. 遇到报错，分析原因后调整方案，不要重复失败的命令
+4. 所有步骤完成后必须输出 [Done]，否则系统会继续等待你的下一条命令
 ---"""
 
 HELP_TEXT = """\
@@ -104,21 +115,26 @@ class SoulShellUI:
             system = system.replace("{{user_profile}}", "（用户画像未配置）")
         return system
 
-    def _build_system_with_context(self) -> str:
-        """在 system prompt 末尾注入当前会话的终端上下文（最近15条命令）。"""
-        if not self._shell_log:
-            return self._system_prompt
-        lines = []
-        for entry in self._shell_log[-self._cfg["shell_context_inject"]:]:
-            status = "✓" if entry["exit"] == 0 else f"✗(exit {entry['exit']})"
-            out = f"\n    输出：{entry['out'][:150]}" if entry["out"] else ""
-            lines.append(f"  {status} [{entry['cwd']}] {entry['cmd']}{out}")
-        block = (
-            "\n\n---\n【当前会话终端记录（最近执行的命令，供你参考上下文）】\n"
-            + "\n".join(lines)
-            + f"\n当前目录：{self._cwd}\n---"
-        )
-        return self._system_prompt + block
+    def _build_system_with_context(self, extra: str = "") -> str:
+        """
+        拼接最终 system prompt：
+          基础人设 + 命令执行协议 + shell 历史上下文（可选）+ 额外模式附加（可选）
+        """
+        result = self._system_prompt + _CMD_PROTOCOL
+        if self._shell_log:
+            lines = []
+            for entry in self._shell_log[-self._cfg["shell_context_inject"]:]:
+                status = "✓" if entry["exit"] == 0 else f"✗(exit {entry['exit']})"
+                out = f"\n    输出：{entry['out'][:150]}" if entry["out"] else ""
+                lines.append(f"  {status} [{entry['cwd']}] {entry['cmd']}{out}")
+            result += (
+                "\n\n---\n【当前会话终端记录（最近执行的命令，供你参考上下文）】\n"
+                + "\n".join(lines)
+                + f"\n当前目录：{self._cwd}\n---"
+            )
+        if extra:
+            result += extra
+        return result
 
     def _get_prompt_text(self) -> str:
         model_str = (
@@ -163,52 +179,104 @@ class SoulShellUI:
             else:
                 await self._handle_shell_command(line)
 
+    async def _run_confirmed(self, cmd: str) -> tuple[str, int] | None:
+        """
+        安全检查 → 用户确认 → 执行并返回 (output, exit_code)。
+        用户拒绝或命令被拦截时返回 None。
+        """
+        try:
+            risk_score = self._interceptor.check(cmd)
+        except BlockedError as e:
+            print(f"\n[Soul Guard] {e}")
+            return ("命令被安全层拦截", -1)
+
+        risk_tag = f"  ⚠ 风险 {risk_score}/100" if risk_score >= 40 else ""
+        print(f"\n[准备执行] {cmd}{risk_tag}")
+
+        high_risk = risk_score >= self._cfg["risk_threshold"]
+        prompt = "高风险，确认执行？[y/N] " if high_risk else "确认执行？[Y/n] "
+        try:
+            confirm = input(prompt).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n已取消")
+            return None
+
+        if high_risk and confirm != "y":
+            return None
+        if not high_risk and confirm == "n":
+            return None
+
+        output, exit_code = await self._run_for_auto(cmd)
+        return output, exit_code
+
     async def _handle_ai_query(self, query: str) -> None:
         if not query:
             print("（问点什么？）")
             return
 
         self._history.append({"role": "user", "content": query})
+        max_rounds = self._cfg["auto_max_iterations"]
 
-        try:
-            adapter = self._registry.get_adapter()
-        except RuntimeError as e:
-            print(f"[错误] {e}")
-            return
+        for _round in range(max_rounds):
+            try:
+                adapter = self._registry.get_adapter()
+            except RuntimeError as e:
+                print(f"[错误] {e}")
+                self._history.pop()
+                return
 
-        parser = StreamParser()
-        full_response: list[str] = []
+            parser = StreamParser()
+            full_response: list[str] = []
+            cmd_results: list[str] = []
 
-        try:
-            token_stream = adapter.chat_stream(
-                self._history, system=self._build_system_with_context()
-            )
-            async for text, cmd in parser.feed(token_stream):
-                if text:
-                    print(text, end="", flush=True)
-                    full_response.append(text)
-                if cmd is not None:
-                    print()
-                    await self._executor.run_with_confirm(cmd)
-        except AdapterError as e:
-            print(f"\n[适配器错误] {e}")
-            if e.body:
-                print(f"    响应：{e.body[:200]}")
-            self._history.pop()
-            return
-        except Exception as e:
-            print(f"\n[未知错误] {e}")
-            self._history.pop()
-            return
+            try:
+                async for text, cmd in parser.feed(
+                    adapter.chat_stream(
+                        self._history, system=self._build_system_with_context()
+                    )
+                ):
+                    if text:
+                        print(text, end="", flush=True)
+                        full_response.append(text)
+                    if cmd is not None:
+                        print()
+                        result = await self._run_confirmed(cmd)
+                        if result is not None:
+                            output, exit_code = result
+                            status = "成功" if exit_code == 0 else f"失败(exit {exit_code})"
+                            cmd_results.append(
+                                f"`{cmd}` → {status}\n{output[:800] or '（无输出）'}"
+                            )
+            except AdapterError as e:
+                print(f"\n[适配器错误] {e}")
+                if e.body:
+                    print(f"    响应：{e.body[:200]}")
+                self._history.pop()
+                return
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                print("\n已中断")
+                return
+            except Exception as e:
+                print(f"\n[未知错误] {e}")
+                self._history.pop()
+                return
 
-        print()
-        response_text = "".join(full_response)
-        if response_text:
-            self._history.append({"role": "assistant", "content": response_text})
+            print()
+            response_text = "".join(full_response)
+            if response_text:
+                self._history.append({"role": "assistant", "content": response_text})
 
-        max_turns = self._cfg["max_history_turns"]
-        if len(self._history) > max_turns * 2:
-            self._history = self._history[-(max_turns * 2):]
+            max_turns = self._cfg["max_history_turns"]
+            if len(self._history) > max_turns * 2:
+                self._history = self._history[-(max_turns * 2):]
+
+            # 没有执行任何命令，或 AI 明确说完了 → 退出循环
+            if not cmd_results or "[Done]" in response_text or "[DONE]" in response_text:
+                break
+
+            # 有命令执行结果 → 反馈给 AI，继续下一轮
+            feedback = "\n\n---\n".join(cmd_results) + "\n\n请继续，完成后输出 [Done]。"
+            self._history.append({"role": "user", "content": feedback})
 
     async def _handle_slash_command(self, line: str) -> bool:
         """返回 True 表示需要退出"""
@@ -450,7 +518,7 @@ class SoulShellUI:
         auto_history: list[dict] = [
             {"role": "user", "content": f"任务：{task}"}
         ]
-        system = self._build_system_with_context() + _AUTO_PROTOCOL
+        system = self._build_system_with_context(extra=_AUTO_PROTOCOL)
 
         print(f"\n[连续模式] 任务：{task}  (最多 {max_iter} 轮，Ctrl+C 随时中断)\n")
 
@@ -538,7 +606,7 @@ class SoulShellUI:
             )
             auto_history.append({"role": "user", "content": feedback})
             # 同步更新 shell 上下文（让后续 AI 查询也能感知）
-            system = self._build_system_with_context() + _AUTO_PROTOCOL
+            system = self._build_system_with_context(extra=_AUTO_PROTOCOL)
 
         else:
             print(f"\n[连续模式] 已达最大轮数（{max_iter}），自动退出")
