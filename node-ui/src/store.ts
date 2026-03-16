@@ -19,6 +19,7 @@ export const initialState: SessionState = {
   messages: [],
   history: [],
   inputText: '',
+  cursorPos: 0,
 }
 
 function addMsg(messages: ChatMsg[], msg: Omit<ChatMsg, 'id'>): ChatMsg[] {
@@ -50,23 +51,22 @@ export function reducer(state: SessionState, action: Action): SessionState {
     // ── 用户直接提交 shell 命令（无 AI，直接进队列）──────────────────────────
 
     case 'SUBMIT_SHELL':
-      // 只记录到消息历史，不改 phase（phase 留 idle，用户可继续输入）
-      // Python 会异步返回 risk + output
       return {
         ...state,
         inputText: '',
+        cursorPos: 0,
         messages: addMsg(state.messages, { role: 'user', text: action.cmd }),
       }
 
     // ── 用户发送查询（? 前缀 → AI）───────────────────────────────────────────
 
     case 'SUBMIT_QUERY':
-      // 前置条件由 useKeys 层保证（phase=idle, connStatus=ready）
       return {
         ...state,
         phase: 'querying',
         activeQueryId: action.queryId,
         inputText: '',
+        cursorPos: 0,
         streamText: '',
         history: [...state.history, { role: 'user', content: action.text }],
         messages: addMsg(state.messages, { role: 'user', text: action.text }),
@@ -131,7 +131,7 @@ export function reducer(state: SessionState, action: Action): SessionState {
       if (action.text) {
         msgs = addMsg(msgs, { role: 'shell', text: action.text })
       }
-      if (action.exit !== null && action.exit !== undefined) {
+      if (action.exit !== null) {
         const label =
           action.exit === 0 ? '✓ 执行成功' : `✗ 退出码 ${action.exit}`
         msgs = addMsg(msgs, { role: 'system', text: label })
@@ -207,8 +207,14 @@ export function reducer(state: SessionState, action: Action): SessionState {
 
     // ── 输入框 ────────────────────────────────────────────────────────────────
 
-    case 'INPUT_CHANGE':
-      return { ...state, inputText: action.text }
+    case 'INPUT_SET':
+      return { ...state, inputText: action.text, cursorPos: action.cursorPos }
+
+    case 'REACT_RECEIVED':
+      return {
+        ...state,
+        messages: addMsg(state.messages, { role: 'ai', text: action.text }),
+      }
 
     default:
       return state

@@ -5,7 +5,7 @@
  *   层 1  Ctrl+C          → 取消 activeQuery + exit()
  *   层 2  cmdQueue 非空   → y / n / q 处理队首 cmd
  *   层 3  querying 状态   → ESC 取消 AI 流
- *   层 4  idle 状态       → Enter / Backspace / 字符 → 正常输入
+ *   层 4  idle 状态       → 输入处理（光标移动 / 字符插入 / 提交）
  */
 
 import type { MutableRefObject, Dispatch } from 'react'
@@ -30,18 +30,16 @@ export function useKeys(
       return
     }
 
-    // ── 层 2：cmd 确认模式（优先于 AI 流）───────────────────────────────────
+    // ── 层 2：cmd 确认模式 ───────────────────────────────────────────────────
     if (state.cmdQueue.length > 0) {
       const head = state.cmdQueue[0]
 
       if (char === 'y' || char === 'Y') {
-        // 发 shell 请求（shellId 已在 CMD_RECEIVED 时生成）
         bridge?.shell(head.shellId, head.cmd)
         dispatch({ type: 'CMD_CONFIRM', shellId: head.shellId })
       } else if (char === 'n' || char === 'N') {
         dispatch({ type: 'CMD_SKIP', shellId: head.shellId })
       } else if (char === 'q' || char === 'Q' || key.escape) {
-        // 取消整个 query
         if (state.activeQueryId) bridge?.cancel(state.activeQueryId)
         dispatch({ type: 'CMD_CANCEL_ALL' })
       }
@@ -55,14 +53,16 @@ export function useKeys(
       return
     }
 
-    // ── 层 4：idle 模式，正常输入 ────────────────────────────────────────────
+    // ── 层 4：idle 模式 ──────────────────────────────────────────────────────
     if (state.phase !== 'idle') return
 
+    const { inputText, cursorPos } = state
+
+    // Enter：提交
     if (key.return) {
-      const text = state.inputText.trim()
+      const text = inputText.trim()
       if (!text || state.connStatus !== 'ready' || !bridge?.isReady()) return
 
-      // ? / ？ / ?? 前缀 → AI 查询；其余 → 直接执行 shell
       const aiPrefixMatch = text.match(/^[?？]{1,2}\s*/)
       if (aiPrefixMatch) {
         const queryText = text.slice(aiPrefixMatch[0].length).trim()
@@ -78,13 +78,41 @@ export function useKeys(
       return
     }
 
-    if (key.backspace || key.delete) {
-      dispatch({ type: 'INPUT_CHANGE', text: state.inputText.slice(0, -1) })
+    // ── 光标移动 ─────────────────────────────────────────────────────────────
+
+    if (key.leftArrow) {
+      dispatch({ type: 'INPUT_SET', text: inputText, cursorPos: Math.max(0, cursorPos - 1) })
+      return
+    }
+    if (key.rightArrow) {
+      dispatch({ type: 'INPUT_SET', text: inputText, cursorPos: Math.min(inputText.length, cursorPos + 1) })
+      return
+    }
+    // Ctrl+A → 行首，Ctrl+E → 行尾（类 bash 快捷键）
+    if (key.ctrl && char === 'a') {
+      dispatch({ type: 'INPUT_SET', text: inputText, cursorPos: 0 })
+      return
+    }
+    if (key.ctrl && char === 'e') {
+      dispatch({ type: 'INPUT_SET', text: inputText, cursorPos: inputText.length })
       return
     }
 
+    // ── 删除 ─────────────────────────────────────────────────────────────────
+
+    if (key.backspace || key.delete) {
+      if (cursorPos > 0) {
+        const newText = inputText.slice(0, cursorPos - 1) + inputText.slice(cursorPos)
+        dispatch({ type: 'INPUT_SET', text: newText, cursorPos: cursorPos - 1 })
+      }
+      return
+    }
+
+    // ── 字符插入（在光标处）──────────────────────────────────────────────────
+
     if (char && !key.ctrl && !key.meta) {
-      dispatch({ type: 'INPUT_CHANGE', text: state.inputText + char })
+      const newText = inputText.slice(0, cursorPos) + char + inputText.slice(cursorPos)
+      dispatch({ type: 'INPUT_SET', text: newText, cursorPos: cursorPos + 1 })
     }
   })
 }

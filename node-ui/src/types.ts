@@ -61,6 +61,7 @@ export interface SessionState {
   messages: ChatMsg[]       // 已完成的历史消息（进入 Static）
   history: HistoryEntry[]   // 发给 Python 的对话上下文
   inputText: string
+  cursorPos: number         // 光标在 inputText 中的位置（0 = 最左）
 }
 
 // ─── Action 类型 ──────────────────────────────────────────────────────────────
@@ -85,8 +86,14 @@ export type Action =
   | { type: 'ERROR_RECEIVED';  id: string; msg: string }
 
   // 用户交互
+  // 用户交互
   | { type: 'CMD_CONFIRM';    shellId: string }  // y
   | { type: 'CMD_SKIP';       shellId: string }  // n
   | { type: 'CMD_CANCEL_ALL' }                   // q 或 ESC（取消整个 query）
   | { type: 'QUERY_CANCEL' }                     // ESC（仅取消 AI 流，无待确认 cmd 时）
-  | { type: 'INPUT_CHANGE';   text: string }
+
+  // 输入框（text + cursorPos 同步更新）
+  | { type: 'INPUT_SET'; text: string; cursorPos: number }
+
+  // Python react：shell 执行后 AI 点评
+  | { type: 'REACT_RECEIVED'; text: string }

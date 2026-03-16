@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import sys
 from typing import Any
 
@@ -58,6 +59,9 @@ class Server:
         self._risk_threshold = RISK_THRESHOLD_HIGH
         self._StreamParser = StreamParser
         self._BlockedError = BlockedError
+
+        from .config.defaults import SOUL_REACT_PROBABILITY
+        self._react_probability = SOUL_REACT_PROBABILITY
 
     async def run(self) -> None:
         """主循环：从 stdin 逐行读取请求并分发。"""
@@ -97,14 +101,14 @@ class Server:
             task = asyncio.create_task(self._handle_query(msg))
             if req_id:
                 self._tasks[req_id] = task
-            task.add_done_callback(lambda t: self._tasks.pop(req_id, None))
+            task.add_done_callback(lambda _: self._tasks.pop(req_id, None))
 
         elif msg_type == "shell":
             req_id = str(msg.get("id", ""))
             task = asyncio.create_task(self._handle_shell(msg))
             if req_id:
                 self._tasks[req_id] = task
-            task.add_done_callback(lambda t: self._tasks.pop(req_id, None))
+            task.add_done_callback(lambda _: self._tasks.pop(req_id, None))
 
         elif msg_type == "cancel":
             req_id = str(msg.get("id", ""))
@@ -163,32 +167,81 @@ class Server:
                 _emit({"type": "error", "id": req_id, "msg": f"blocked: {e}"})
                 return
 
-            # 通知 Node 风险评分，由 Node 决定是否需要用户确认
             _emit({"type": "risk", "id": req_id, "score": score, "cmd": cmd})
 
-            # 等待 Node 回传 confirm（此处简化：直接执行，后续迭代再加确认握手）
             proc = await asyncio.create_subprocess_shell(
                 cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
             assert proc.stdout is not None
+
+            # 收集输出用于 react（同时实时推流给 Node）
+            output_chunks: list[str] = []
             while True:
                 chunk = await proc.stdout.read(4096)
                 if not chunk:
                     break
                 text = chunk.decode(errors="replace")
+                output_chunks.append(text)
                 _emit({"type": "output", "id": req_id, "text": text, "exit": None})
 
             await proc.wait()
             exit_code = proc.returncode
             _emit({"type": "output", "id": req_id, "text": "", "exit": exit_code})
 
+            # 失败必 react；成功按概率 react（Soul 在旁边看着）
+            should_react = (exit_code != 0) or (random.random() < self._react_probability)
+            if should_react:
+                full_output = "".join(output_chunks)[:800]
+                react_id = f"react_{req_id}"
+                task = asyncio.create_task(
+                    self._handle_react(react_id, cmd, full_output, exit_code)
+                )
+                self._tasks[react_id] = task
+                task.add_done_callback(lambda _: self._tasks.pop(react_id, None))
+
         except asyncio.CancelledError:
             _emit({"type": "error", "id": req_id, "msg": "cancelled"})
             raise
         except Exception as e:
             _emit({"type": "error", "id": req_id, "msg": str(e)})
+
+
+    async def _handle_react(
+        self,
+        react_id: str,
+        cmd: str,
+        output: str,
+        exit_code: int,
+    ) -> None:
+        """Soul 看完 shell 输出后的点评，失败必出声，成功按概率。"""
+        try:
+            adapter = self._registry.get_adapter()
+
+            status = "成功" if exit_code == 0 else f"失败（退出码 {exit_code}）"
+            user_msg = f"[Shell 执行{status}]\n$ {cmd}\n{output.strip()}"
+
+            system_prompt: str | None = None
+            try:
+                system_prompt = self._system_prompt_file.read_text(encoding="utf-8")
+            except Exception:
+                pass
+
+            full_text = ""
+            async for chunk in adapter.chat_stream(
+                [{"role": "user", "content": user_msg}],
+                system=system_prompt,
+            ):
+                full_text += chunk
+
+            if full_text.strip():
+                _emit({"type": "react", "id": react_id, "text": full_text.strip()})
+
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass  # react 失败静默，不干扰主流程
 
 
 async def run_server() -> None:

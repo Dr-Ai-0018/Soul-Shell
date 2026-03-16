@@ -24,7 +24,7 @@ export function useBridge(
 
     bridge.on('ready', () => dispatch({ type: 'CONN_READY' }))
 
-    bridge.on('close', (code: number) =>
+    bridge.on('close', (code: number | null) =>
       dispatch({ type: 'CONN_ERROR', code: code ?? 1 }),
     )
 
@@ -70,7 +70,11 @@ export function useBridge(
           dispatch({ type: 'ERROR_RECEIVED', id: msg.id, msg: msg.msg })
           break
 
-        // pong / react：由 bridge 内部处理，此处忽略
+        case 'react':
+          dispatch({ type: 'REACT_RECEIVED', text: msg.text })
+          break
+
+        // pong：bridge 内部处理
       }
     })
 
