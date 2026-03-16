@@ -41,6 +41,24 @@ class Server:
         # id -> asyncio.Task，用于支持 cancel
         self._tasks: dict[str, asyncio.Task] = {}
 
+        # 启动时加载一次配置，避免每次 query 都重复读 toml
+        from .models.registry import ModelRegistry
+        from .models.channel import Channel
+        from .config.loader import load_channels_raw
+        from .config.defaults import MAX_HISTORY_TURNS, SYSTEM_PROMPT_FILE
+        from .engine.stream_parser import StreamParser
+        from .shell.interceptor import Interceptor, BlockedError
+        from .config.defaults import RISK_THRESHOLD_HIGH
+
+        channels = [Channel.from_dict(c) for c in load_channels_raw()]
+        self._registry = ModelRegistry(channels)
+        self._max_history_turns = MAX_HISTORY_TURNS
+        self._system_prompt_file = SYSTEM_PROMPT_FILE
+        self._interceptor = Interceptor()
+        self._risk_threshold = RISK_THRESHOLD_HIGH
+        self._StreamParser = StreamParser
+        self._BlockedError = BlockedError
+
     async def run(self) -> None:
         """主循环：从 stdin 逐行读取请求并分发。"""
         loop = asyncio.get_running_loop()
@@ -104,24 +122,19 @@ class Server:
         history = msg.get("history", [])
 
         try:
-            from .models.registry import ModelRegistry
-            from .engine.stream_parser import StreamParser
-            from .config.defaults import MAX_HISTORY_TURNS, SYSTEM_PROMPT_FILE
-
-            registry = ModelRegistry()
-            adapter = registry.current_adapter()
+            adapter = self._registry.get_adapter()
 
             # 构造消息列表
-            messages: list[dict] = list(history[-(MAX_HISTORY_TURNS * 2):])
+            messages: list[dict] = list(history[-(self._max_history_turns * 2):])
             messages.append({"role": "user", "content": text})
 
             system_prompt: str | None = None
             try:
-                system_prompt = SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
+                system_prompt = self._system_prompt_file.read_text(encoding="utf-8")
             except Exception:
                 pass
 
-            parser = StreamParser()
+            parser = self._StreamParser()
             token_stream = adapter.chat_stream(messages, system=system_prompt)
 
             async for chunk_text, cmd in parser.feed(token_stream):
@@ -144,13 +157,9 @@ class Server:
         cmd = msg.get("cmd", "")
 
         try:
-            from .shell.interceptor import Interceptor, BlockedError
-            from .config.defaults import RISK_THRESHOLD_HIGH
-
-            interceptor = Interceptor()
             try:
-                score = interceptor.check(cmd)
-            except BlockedError as e:
+                score = self._interceptor.check(cmd)
+            except self._BlockedError as e:
                 _emit({"type": "error", "id": req_id, "msg": f"blocked: {e}"})
                 return
 
@@ -164,13 +173,11 @@ class Server:
                 stderr=asyncio.subprocess.STDOUT,
             )
             assert proc.stdout is not None
-            output_chunks: list[str] = []
             while True:
                 chunk = await proc.stdout.read(4096)
                 if not chunk:
                     break
                 text = chunk.decode(errors="replace")
-                output_chunks.append(text)
                 _emit({"type": "output", "id": req_id, "text": text, "exit": None})
 
             await proc.wait()
