@@ -7,7 +7,10 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.styles import Style
 
-from ..config.defaults import CONFIG_FILE, SYSTEM_PROMPT_FILE, USER_PROFILE_FILE
+from ..config.defaults import (
+    CONFIG_FILE, SYSTEM_PROMPT_FILE, USER_PROFILE_FILE,
+    SHELL_LOG_OUTPUT_MAX_CHARS, CONTEXT_OUTPUT_MAX_CHARS,
+)
 from ..config.loader import load_channels_raw, load_settings, CONFIG_EXAMPLE
 from ..models.channel import Channel
 from ..models.registry import ModelRegistry
@@ -125,7 +128,8 @@ class SoulShellUI:
             lines = []
             for entry in self._shell_log[-self._cfg["shell_context_inject"]:]:
                 status = "✓" if entry["exit"] == 0 else f"✗(exit {entry['exit']})"
-                out = f"\n    输出：{entry['out'][:150]}" if entry["out"] else ""
+                _o = entry['out'] if CONTEXT_OUTPUT_MAX_CHARS is None else entry['out'][:CONTEXT_OUTPUT_MAX_CHARS]
+                out = f"\n    输出：{_o}" if _o else ""
                 lines.append(f"  {status} [{entry['cwd']}] {entry['cmd']}{out}")
             result += (
                 "\n\n---\n【当前会话终端记录（最近执行的命令，供你参考上下文）】\n"
@@ -411,7 +415,7 @@ class SoulShellUI:
         self._shell_log.append({
             "cmd": cmd,
             "exit": exit_code,
-            "out": output.strip()[:300],
+            "out": output.strip() if SHELL_LOG_OUTPUT_MAX_CHARS is None else output.strip()[:SHELL_LOG_OUTPUT_MAX_CHARS],
             "cwd": os.path.basename(self._cwd) or self._cwd,
         })
         limit = self._cfg["shell_log_size"]
@@ -428,7 +432,8 @@ class SoulShellUI:
             return
 
         status = f"失败（exit {exit_code}）" if failed else "成功（exit 0）"
-        output_preview = output.strip()[:300] if output.strip() else "无输出"
+        _out = output.strip()
+        output_preview = (_out if SHELL_LOG_OUTPUT_MAX_CHARS is None else _out[:SHELL_LOG_OUTPUT_MAX_CHARS]) if _out else "无输出"
 
         react_msg = (
             f"用户刚执行了 shell 命令：`{cmd}`\n"

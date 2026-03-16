@@ -41,7 +41,7 @@ function tokenize(text: string): Segment[] {
     }
 
     // 带闭合的引号字符串
-    const quotedMatch = text.slice(pos).match(/^(['"])((?:\\.|[^\\])*?)\1/)
+    const quotedMatch = text.slice(pos).match(/^(['"'])((?:\\.|[^\\])*?)\1/)
     if (quotedMatch) {
       segs.push({ text: quotedMatch[0], color: 'yellowBright' })
       pos += quotedMatch[0].length
@@ -142,13 +142,20 @@ export function InputBar({ state }: InputBarProps) {
 
   const hasPendingCmd = cmdQueue.length > 0
   const isQuerying = phase === 'querying' && !hasPendingCmd
-  const busy = hasPendingCmd || isQuerying || connStatus !== 'ready'
   const isAiMode = /^[?？]/.test(inputText)
+
+  // 边框颜色：连接异常 → 灰；等待确认 → 品红；AI 响应中 → 黄；AI 模式输入 → 青；正常 → 绿
+  const borderColor =
+    connStatus !== 'ready' ? 'gray'
+    : hasPendingCmd ? 'magentaBright'
+    : isQuerying ? 'yellow'
+    : isAiMode ? 'cyanBright'
+    : 'greenBright'
 
   return (
     <Box
       borderStyle="single"
-      borderColor={busy ? 'gray' : isAiMode ? 'cyanBright' : 'greenBright'}
+      borderColor={borderColor}
       paddingX={1}
     >
       {connStatus === 'error' ? (
@@ -157,15 +164,20 @@ export function InputBar({ state }: InputBarProps) {
         <Text color="gray">连接中，请稍候…</Text>
       ) : hasPendingCmd ? (
         <Text color="magentaBright">等待确认  [y] 执行  [n] 跳过  [q] 取消</Text>
-      ) : isQuerying ? (
-        <Text color="yellow">⟳  AI 响应中…  [ESC 取消]</Text>
       ) : (
-        // idle：显示带语法高亮的输入内容 + 块状光标
+        // idle 和 querying 均显示可编辑输入框
         <>
-          <Text bold color={isAiMode ? 'cyanBright' : 'greenBright'}>
+          {/* querying 时显示 AI 响应指示器 */}
+          {isQuerying && (
+            <Text color="yellow">⟳ </Text>
+          )}
+          <Text bold color={isAiMode ? 'cyanBright' : isQuerying ? 'yellow' : 'greenBright'}>
             {isAiMode ? '?  ' : '$  '}
           </Text>
           {renderWithCursor(tokenize(inputText), cursorPos)}
+          {isQuerying && (
+            <Text color="gray" dimColor>  ESC取消</Text>
+          )}
         </>
       )}
     </Box>

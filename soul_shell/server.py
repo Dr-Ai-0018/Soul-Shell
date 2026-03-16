@@ -60,8 +60,12 @@ class Server:
         self._StreamParser = StreamParser
         self._BlockedError = BlockedError
 
-        from .config.defaults import SOUL_REACT_PROBABILITY
+        from .config.defaults import SOUL_REACT_PROBABILITY, REACT_OUTPUT_MAX_CHARS
         self._react_probability = SOUL_REACT_PROBABILITY
+        self._react_output_max = REACT_OUTPUT_MAX_CHARS
+
+        # 防止多个 react 任务并发，避免 AI 回复批量涌出
+        self._react_running = False
 
     async def run(self) -> None:
         """主循环：从 stdin 逐行读取请求并分发。"""
@@ -191,9 +195,13 @@ class Server:
             _emit({"type": "output", "id": req_id, "text": "", "exit": exit_code})
 
             # 失败必 react；成功按概率 react（Soul 在旁边看着）
+            # 同一时间只允许一个 react 任务，防止批量命令后 AI 回复集中涌出
             should_react = (exit_code != 0) or (random.random() < self._react_probability)
-            if should_react:
-                full_output = "".join(output_chunks)[:800]
+            if should_react and not self._react_running:
+                self._react_running = True
+                full_output = "".join(output_chunks)
+                if self._react_output_max is not None:
+                    full_output = full_output[:self._react_output_max]
                 react_id = f"react_{req_id}"
                 task = asyncio.create_task(
                     self._handle_react(react_id, cmd, full_output, exit_code)
@@ -242,6 +250,8 @@ class Server:
             raise
         except Exception:
             pass  # react 失败静默，不干扰主流程
+        finally:
+            self._react_running = False
 
 
 async def run_server() -> None:

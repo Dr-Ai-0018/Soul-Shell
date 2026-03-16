@@ -26,8 +26,6 @@ export type ConnStatus = 'connecting' | 'ready' | 'error'
  * 用户交互通道的状态：
  *   idle     = 可接受新输入
  *   querying = AI 响应中（可 ESC 取消）
- *
- * 注意：phase 和 cmdQueue 是正交的——AI 还在流式输出时也可以有 cmd 待确认
  */
 export type Phase = 'idle' | 'querying'
 
@@ -52,6 +50,12 @@ export interface ChatMsg {
   riskScore?: number  // 仅 role=risk 时携带
 }
 
+/** ?? 模式中正在执行的 shell 命令，用于收集输出以反馈给 AI */
+export interface ExecRecord {
+  cmd: string
+  chunks: string[]
+}
+
 export interface SessionState {
   connStatus: ConnStatus
   phase: Phase
@@ -62,6 +66,12 @@ export interface SessionState {
   history: HistoryEntry[]   // 发给 Python 的对话上下文
   inputText: string
   cursorPos: number         // 光标在 inputText 中的位置（0 = 最左）
+
+  // ── ?? 自动模式（agentic loop）────────────────────────────────────────────
+  autoMode: boolean         // 当前是否在 ?? 循环中
+  autoRound: number         // 已完成的轮次（0-indexed，最多 9）
+  execTracker: Record<string, ExecRecord>  // shellId → 执行跟踪（收集输出）
+  autoCmdResults: string[]  // 格式化的命令执行结果，等待反馈给 AI
 }
 
 // ─── Action 类型 ──────────────────────────────────────────────────────────────
@@ -73,6 +83,9 @@ export type Action =
 
   // 用户发送查询（? 前缀触发 AI）
   | { type: 'SUBMIT_QUERY'; text: string; queryId: string }
+
+  // 用户发送自动任务（?? 前缀，触发 AI + 命令反馈循环）
+  | { type: 'SUBMIT_AUTO'; text: string; queryId: string }
 
   // 用户直接提交 shell 命令（无 ? 前缀）
   | { type: 'SUBMIT_SHELL'; cmd: string; shellId: string }
@@ -86,7 +99,6 @@ export type Action =
   | { type: 'ERROR_RECEIVED';  id: string; msg: string }
 
   // 用户交互
-  // 用户交互
   | { type: 'CMD_CONFIRM';    shellId: string }  // y
   | { type: 'CMD_SKIP';       shellId: string }  // n
   | { type: 'CMD_CANCEL_ALL' }                   // q 或 ESC（取消整个 query）
@@ -97,3 +109,7 @@ export type Action =
 
   // Python react：shell 执行后 AI 点评
   | { type: 'REACT_RECEIVED'; text: string }
+
+  // ?? 自动模式
+  | { type: 'AUTO_LOOP_NEXT'; queryId: string; feedback: string }  // 触发下一轮
+  | { type: 'AUTO_DONE' }                                           // 循环结束
