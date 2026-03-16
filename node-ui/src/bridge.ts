@@ -5,9 +5,18 @@
  * 提供 send() 发送请求、onMessage() 注册响应回调。
  */
 
-import { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
+
+/** 自动探测可用的 Python 命令（python3 优先，兼容 Windows python） */
+function detectPython(): string {
+  for (const cmd of ["python3", "python"]) {
+    const r = spawnSync(cmd, ["--version"], { stdio: "ignore" });
+    if (r.status === 0) return cmd;
+  }
+  throw new Error("未找到可用的 Python 命令，请确认已安装 Python 3");
+}
 
 export type SoulMessage = Record<string, unknown> & { type: string };
 
@@ -15,7 +24,7 @@ export class PythonBridge extends EventEmitter {
   private proc: ChildProcessWithoutNullStreams;
   private ready = false;
 
-  constructor(pythonCmd = "python", args = ["-m", "soul_shell", "--server"]) {
+  constructor(pythonCmd = detectPython(), args = ["-m", "soul_shell", "--server"]) {
     super();
     this.proc = spawn(pythonCmd, args, {
       stdio: ["pipe", "pipe", "inherit"],

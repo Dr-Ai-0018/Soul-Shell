@@ -7,7 +7,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Soul-Shell：带有赛博灵魂的毒舌 Linux 终端代理",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="示例：\n  soul-shell\n  soul-shell --model deepseek/deepseek-chat",
+        epilog="示例：\n  soul-shell\n  soul-shell --model deepseek/deepseek-chat\n  soul-shell --server",
     )
     parser.add_argument(
         "--model",
@@ -20,7 +20,20 @@ def main() -> None:
         default="standard",
         help="运行模式（默认：standard）",
     )
+    parser.add_argument(
+        "--server",
+        action="store_true",
+        help="以 JSON-lines 服务模式运行，供 Node.js UI 层调用",
+    )
     args = parser.parse_args()
+
+    if args.server:
+        try:
+            from .server import run_server
+            asyncio.run(run_server())
+        except KeyboardInterrupt:
+            pass
+        return
 
     try:
         from .ui.prompt import SoulShellUI

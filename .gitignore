@@ -48,3 +48,9 @@ prompts/user_profile.md
 Original_Thought.md
 DESIGN.md
 IMPROVEMENTS.md
+
+# Node.js
+node-ui/node_modules/
+node-ui/dist/
+node-ui/.pnpm-debug.log*
+node-ui/pnpm-lock.yaml
