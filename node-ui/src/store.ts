@@ -47,7 +47,18 @@ export function reducer(state: SessionState, action: Action): SessionState {
         }),
       }
 
-    // ── 用户发送查询 ──────────────────────────────────────────────────────────
+    // ── 用户直接提交 shell 命令（无 AI，直接进队列）──────────────────────────
+
+    case 'SUBMIT_SHELL':
+      // 只记录到消息历史，不改 phase（phase 留 idle，用户可继续输入）
+      // Python 会异步返回 risk + output
+      return {
+        ...state,
+        inputText: '',
+        messages: addMsg(state.messages, { role: 'user', text: action.cmd }),
+      }
+
+    // ── 用户发送查询（? 前缀 → AI）───────────────────────────────────────────
 
     case 'SUBMIT_QUERY':
       // 前置条件由 useKeys 层保证（phase=idle, connStatus=ready）

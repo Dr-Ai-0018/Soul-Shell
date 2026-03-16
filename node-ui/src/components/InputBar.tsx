@@ -15,10 +15,13 @@ export function InputBar({ state }: InputBarProps) {
   const isQuerying = phase === 'querying' && !hasPendingCmd
   const busy = hasPendingCmd || isQuerying || connStatus !== 'ready'
 
+  // 根据输入内容决定前缀样式：? 开头 → AI 模式，否则 → shell 模式
+  const isAiMode = /^[?？]/.test(inputText)
+
   return (
     <Box
       borderStyle="single"
-      borderColor={busy ? 'gray' : 'blueBright'}
+      borderColor={busy ? 'gray' : isAiMode ? 'cyan' : 'blueBright'}
       paddingX={1}
     >
       {connStatus === 'error' ? (
@@ -26,14 +29,16 @@ export function InputBar({ state }: InputBarProps) {
       ) : connStatus !== 'ready' ? (
         <Text color="gray">连接中，请稍候…</Text>
       ) : hasPendingCmd ? (
-        <Text color="magenta">等待命令确认  [y / n / q]</Text>
+        <Text color="magenta">等待命令确认  [y] 执行  [n] 跳过  [q] 取消</Text>
       ) : isQuerying ? (
         <Text color="yellow">⟳  AI 响应中…  [ESC 取消]</Text>
       ) : (
         <>
-          <Text bold color="blueBright">›  </Text>
+          <Text bold color={isAiMode ? 'cyan' : 'blueBright'}>
+            {isAiMode ? '?  ' : '$  '}
+          </Text>
           <Text>{inputText}</Text>
-          <Text color="blueBright">▋</Text>
+          <Text color={isAiMode ? 'cyan' : 'blueBright'}>▋</Text>
         </>
       )}
     </Box>

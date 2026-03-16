@@ -11,7 +11,7 @@
 import type { MutableRefObject, Dispatch } from 'react'
 import { useInput } from 'ink'
 import { PythonBridge } from '../bridge.js'
-import { newQueryId } from '../ids.js'
+import { newQueryId, newShellId } from '../ids.js'
 import type { SessionState, Action } from '../types.js'
 
 export function useKeys(
@@ -60,10 +60,20 @@ export function useKeys(
 
     if (key.return) {
       const text = state.inputText.trim()
-      if (text && state.connStatus === 'ready' && bridge?.isReady()) {
+      if (!text || state.connStatus !== 'ready' || !bridge?.isReady()) return
+
+      // ? / ？ / ?? 前缀 → AI 查询；其余 → 直接执行 shell
+      const aiPrefixMatch = text.match(/^[?？]{1,2}\s*/)
+      if (aiPrefixMatch) {
+        const queryText = text.slice(aiPrefixMatch[0].length).trim()
+        if (!queryText) return
         const queryId = newQueryId()
-        dispatch({ type: 'SUBMIT_QUERY', text, queryId })
-        bridge.query(queryId, text, state.history.slice(-20))
+        dispatch({ type: 'SUBMIT_QUERY', text: queryText, queryId })
+        bridge.query(queryId, queryText, state.history.slice(-20))
+      } else {
+        const shellId = newShellId()
+        dispatch({ type: 'SUBMIT_SHELL', cmd: text, shellId })
+        bridge.shell(shellId, text)
       }
       return
     }

@@ -70,8 +70,11 @@ export type Action =
   | { type: 'CONN_READY' }
   | { type: 'CONN_ERROR'; code: number }
 
-  // 用户发送查询
+  // 用户发送查询（? 前缀触发 AI）
   | { type: 'SUBMIT_QUERY'; text: string; queryId: string }
+
+  // 用户直接提交 shell 命令（无 ? 前缀）
+  | { type: 'SUBMIT_SHELL'; cmd: string; shellId: string }
 
   // Python 事件
   | { type: 'TOKEN_RECEIVED';  id: string; text: string }
