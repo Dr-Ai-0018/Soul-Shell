@@ -1,76 +1,45 @@
 /**
  * index.tsx — Soul-Shell Node UI 入口
  *
- * Phase 2 骨架：启动 Python bridge，渲染基础 Ink 界面。
- * 目前只做 ping/pong 验证通信，后续迭代加输入框和流式渲染。
+ * 架构：
+ *   useReducer（store.ts）   → 纯函数状态机，防不可能状态
+ *   useBridge（hooks/）      → bridge 事件 → dispatch
+ *   useKeys（hooks/）        → 键盘分层路由 → dispatch + bridge
+ *   组件（components/）      → 纯展示，无副作用
+ *
+ * ID 隔离：queryId (q1, q2…) 与 shellId (s1, s2…) 前缀不同，
+ *          Python _tasks dict 永不冲突。
  */
 
-import React, { useState, useEffect } from "react";
-import { render, Text, Box } from "ink";
-import { PythonBridge, SoulMessage } from "./bridge.js";
+import React, { useReducer, useRef } from 'react'
+import { render, Box, useApp } from 'ink'
+import { PythonBridge } from './bridge.js'
+import { reducer, initialState } from './store.js'
+import { useBridge } from './hooks/useBridge.js'
+import { useKeys } from './hooks/useKeys.js'
+import { Header } from './components/Header.js'
+import { MessageList } from './components/MessageList.js'
+import { StreamView } from './components/StreamView.js'
+import { CmdQueue } from './components/CmdQueue.js'
+import { InputBar } from './components/InputBar.js'
 
 function App() {
-  const [status, setStatus] = useState<"connecting" | "ready" | "error">(
-    "connecting"
-  );
-  const [log, setLog] = useState<string[]>([]);
+  const { exit } = useApp()
+  const [state, dispatch] = useReducer(reducer, initialState)
+  const bridgeRef = useRef<PythonBridge | null>(null)
 
-  const append = (line: string) =>
-    setLog((prev) => [...prev.slice(-20), line]);
-
-  useEffect(() => {
-    const bridge = new PythonBridge();
-
-    bridge.on("ready", () => {
-      setStatus("ready");
-      append("[bridge] Python core 已就绪");
-    });
-
-    bridge.on("message", (msg: SoulMessage) => {
-      append(`[${msg.type}] ${JSON.stringify(msg)}`);
-    });
-
-    bridge.on("close", (code: number) => {
-      setStatus("error");
-      append(`[bridge] Python 进程退出，code=${code}`);
-    });
-
-    return () => bridge.destroy();
-  }, []);
-
-  const statusColor =
-    status === "ready" ? "green" : status === "error" ? "red" : "yellow";
-  const statusText =
-    status === "ready"
-      ? "● 已连接"
-      : status === "error"
-      ? "✗ 连接断开"
-      : "○ 连接中…";
+  useBridge(bridgeRef, dispatch)
+  useKeys(state, dispatch, bridgeRef, exit)
 
   return (
-    <Box flexDirection="column" padding={1}>
-      <Box marginBottom={1}>
-        <Text bold color="cyan">
-          Soul-Shell{" "}
-        </Text>
-        <Text color={statusColor}>{statusText}</Text>
-      </Box>
-
-      <Box flexDirection="column">
-        {log.map((line, i) => (
-          <Text key={i} dimColor>
-            {line}
-          </Text>
-        ))}
-      </Box>
-
-      {status === "ready" && (
-        <Box marginTop={1}>
-          <Text color="gray">（UI 输入框开发中…）</Text>
-        </Box>
-      )}
+    <Box flexDirection="column" paddingX={1}>
+      <Header connStatus={state.connStatus} />
+      <MessageList messages={state.messages} />
+      <StreamView text={state.streamText} active={state.phase === 'querying'} />
+      <CmdQueue queue={state.cmdQueue} />
+      <InputBar state={state} />
     </Box>
-  );
+  )
 }
 
-render(<App />);
+render(<App />)
