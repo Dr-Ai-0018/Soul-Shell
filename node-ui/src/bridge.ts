@@ -10,13 +10,35 @@ import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import type { NodeMsg, PyMsg } from "./types.js";
 
-/** 自动探测可用的 Python 命令（python3 优先，兼容 Windows python） */
-function detectPython(): string {
+/**
+ * 探测启动方式（优先级）：
+ *  1. uv run — 自动激活 .venv，跨平台，依赖隔离最优
+ *  2. .venv/bin/python — 直接用项目虚拟环境
+ *  3. python3 / python — 系统 Python（可能缺依赖，兜底）
+ */
+function detectLauncher(): { cmd: string; args: string[] } {
+  const projectRoot = new URL("../../", import.meta.url).pathname;
+
+  // 1. 尝试 uv run
+  const uvCheck = spawnSync("uv", ["--version"], { stdio: "ignore" });
+  if (uvCheck.status === 0) {
+    return { cmd: "uv", args: ["run", "python", "-m", "soul_shell", "--server"] };
+  }
+
+  // 2. 尝试 .venv/bin/python（Unix）
+  const venvPython = `${projectRoot}.venv/bin/python`;
+  const venvCheck = spawnSync(venvPython, ["--version"], { stdio: "ignore" });
+  if (venvCheck.status === 0) {
+    return { cmd: venvPython, args: ["-m", "soul_shell", "--server"] };
+  }
+
+  // 3. 兜底：系统 Python
   for (const cmd of ["python3", "python"]) {
     const r = spawnSync(cmd, ["--version"], { stdio: "ignore" });
-    if (r.status === 0) return cmd;
+    if (r.status === 0) return { cmd, args: ["-m", "soul_shell", "--server"] };
   }
-  throw new Error("未找到可用的 Python 命令，请确认已安装 Python 3");
+
+  throw new Error("未找到可用的 Python 环境，请确认已安装 uv 或 Python 3");
 }
 
 /** 兼容旧代码（内部使用），外部代码应改用 PyMsg */
@@ -26,9 +48,10 @@ export class PythonBridge extends EventEmitter {
   private proc: ChildProcessWithoutNullStreams;
   private ready = false;
 
-  constructor(pythonCmd = detectPython(), args = ["-m", "soul_shell", "--server"]) {
+  constructor() {
     super();
-    this.proc = spawn(pythonCmd, args, {
+    const { cmd, args } = detectLauncher();
+    this.proc = spawn(cmd, args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: new URL("../../", import.meta.url).pathname,
     });
