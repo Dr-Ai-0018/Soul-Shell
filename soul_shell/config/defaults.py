@@ -23,6 +23,7 @@ SOUL_REACT_PROBABILITY = 0.30  # 命令成功时 Soul 点评的触发概率
 REACT_OUTPUT_MAX_CHARS: "int | None" = None   # react 上下文里 shell 输出的最大字符数
 SHELL_LOG_OUTPUT_MAX_CHARS: "int | None" = None  # shell_log 每条 out 字段的最大字符数
 CONTEXT_OUTPUT_MAX_CHARS: "int | None" = 150  # 注入 AI context 时每条命令输出的最大字符数
+CMD_OUTPUT_MAX_CHARS: "int | None" = 1500  # AI 执行命令后反馈给它的输出最大字符数（影响 ? 和 ?? 模式）
 
 # 连续执行模式（Agentic Loop）
 AUTO_MAX_ITERATIONS = 10     # 最大自动执行轮数

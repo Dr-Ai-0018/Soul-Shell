@@ -248,9 +248,15 @@ class SoulShellUI:
                         if result is not None:
                             output, exit_code = result
                             status = "成功" if exit_code == 0 else f"失败(exit {exit_code})"
+                            # 使用配置的输出截断长度
+                            max_chars = self._cfg.get("cmd_output_max_chars", 1500)
+                            output_preview = output[:max_chars] if output.strip() else "（无输出）"
                             cmd_results.append(
-                                f"`{cmd}` → {status}\n{output[:800] or '（无输出）'}"
+                                f"`{cmd}` → {status}\n输出：\n{output_preview}"
                             )
+                        else:
+                            # 用户拒绝或命令被拦截
+                            cmd_results.append(f"`{cmd}` → 用户跳过或被拦截")
             except AdapterError as e:
                 print(f"\n[适配器错误] {e}")
                 if e.body:
@@ -279,7 +285,7 @@ class SoulShellUI:
                 break
 
             # 有命令执行结果 → 反馈给 AI，继续下一轮
-            feedback = "\n\n---\n".join(cmd_results) + "\n\n请继续，完成后输出 [Done]。"
+            feedback = "\n\n---\n命令执行结果：\n" + "\n\n".join(cmd_results) + "\n\n请根据结果继续，完成后输出 [Done]。"
             self._history.append({"role": "user", "content": feedback})
 
     async def _handle_slash_command(self, line: str) -> bool:
